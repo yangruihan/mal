@@ -2,20 +2,43 @@ using mallib
 
 class Main
 {
+
+  static MalList qq_loop(MalVal elt, MalList acc)
+  {
+    lst := elt as MalList
+    if (lst?.count == 2 && (lst[0] as MalSymbol)?.value == "splice-unquote")
+      return MalList(MalVal[MalSymbol("concat"), lst[1], acc])
+    else
+      return MalList(MalVal[MalSymbol("cons"), quasiquote(elt), acc])
+  }
+
+  static MalList qq_foldr(MalSeq xs)
+  {
+    acc := MalList([,])
+    for (i:=xs.count-1; 0<=i; i-=1)
+      acc = qq_loop(xs[i], acc)
+    return acc
+  }
+
   static MalVal quasiquote(MalVal ast)
   {
-    if (!MalTypes.isPair(ast))
-      return MalList(MalVal[MalSymbol("quote"), ast])
-    astSeq := ast as MalSeq
-    if ((astSeq[0] as MalSymbol)?.value == "unquote")
-      return astSeq[1]
-    if (MalTypes.isPair(astSeq[0]))
+    switch (ast.typeof)
     {
-      ast0Seq := astSeq[0] as MalSeq
-      if ((ast0Seq[0] as MalSymbol)?.value == "splice-unquote")
-        return MalList(MalVal[MalSymbol("concat"), ast0Seq[1], quasiquote(astSeq.drop(1))])
+      case MalList#:
+        lst := ast as MalList
+        if (lst.count == 2 && (lst[0] as MalSymbol)?.value == "unquote")
+          return  lst[1]
+        else
+          return qq_foldr((MalSeq)ast)
+      case MalVector#:
+        return MalList(MalVal[MalSymbol("vec"), qq_foldr((MalSeq)ast)])
+      case MalSymbol#:
+        return MalList(MalVal[MalSymbol("quote"), ast])
+      case MalHashMap#:
+        return MalList(MalVal[MalSymbol("quote"), ast])
+      default:
+        return ast
     }
-    return MalList(MalVal[MalSymbol("cons"), quasiquote(astSeq[0]), quasiquote(astSeq.drop(1))])
   }
 
   static Bool isMacroCall(MalVal ast, MalEnv env)
@@ -51,13 +74,13 @@ class Main
       case MalSymbol#:
         return env.get(ast)
       case MalList#:
-        newElements := (ast as MalList).value.map { EVAL(it, env) }
+        newElements := (ast as MalList).value.map |MalVal v -> MalVal| { EVAL(v, env) }
         return MalList(newElements)
       case MalVector#:
-        newElements := (ast as MalVector).value.map { EVAL(it, env) }
+        newElements := (ast as MalVector).value.map |MalVal v -> MalVal| { EVAL(v, env) }
         return MalVector(newElements)
       case MalHashMap#:
-        newElements := (ast as MalHashMap).value.map |MalVal v -> MalVal| { return EVAL(v, env) }
+        newElements := (ast as MalHashMap).value.map |MalVal v -> MalVal| { EVAL(v, env) }
         return MalHashMap.fromMap(newElements)
       default:
         return ast
@@ -87,11 +110,13 @@ class Main
           // TCO
         case "quote":
           return astList[1]
+        case "quasiquoteexpand":
+          return quasiquote(astList[1])
         case "quasiquote":
           ast = quasiquote(astList[1])
           // TCO
         case "defmacro!":
-          f := EVAL(astList[2], env) as MalUserFunc
+          f := (EVAL(astList[2], env) as MalUserFunc).dup
           f.isMacro = true
           return env.set(astList[1], f)
         case "macroexpand":
